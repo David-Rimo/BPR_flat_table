@@ -221,26 +221,24 @@ def process_topup(cursor, conn, company_id):
 
 def refresh_current_balance(cursor, conn, company_id):
     print("\n  Refreshing current_balance_points...")
+
+    # Single query: calculate and update in one round trip
     cursor.execute("""
-        SELECT r.user_id, r.country_id, SUM(r.points) AS balance
-        FROM rewardpoints r
-        WHERE r.user_id IN (
-            SELECT id FROM users WHERE company_id = %s
-        )
-        GROUP BY r.user_id, r.country_id
-    """, (company_id,))
-    rows = cursor.fetchall()
-    updated = 0
-    for row in rows:
-        cursor.execute("""
-            UPDATE balance_points_report_summary
-            SET current_balance_points = %s
-            WHERE vc_user_id = %s AND country_id = %s AND company_id = %s
-        """, (row['balance'], row['user_id'], row['country_id'], company_id))
-        if cursor.rowcount > 0:
-            updated += 1
+        UPDATE balance_points_report_summary bpr
+        INNER JOIN (
+            SELECT r.user_id, r.country_id, SUM(r.points) AS balance
+            FROM rewardpoints r
+            INNER JOIN users u ON r.user_id = u.id
+            WHERE u.company_id = %s
+            GROUP BY r.user_id, r.country_id
+        ) calc ON calc.user_id = bpr.vc_user_id
+              AND calc.country_id = bpr.country_id
+        SET bpr.current_balance_points = calc.balance
+        WHERE bpr.company_id = %s
+    """, (company_id, company_id))
+
     conn.commit()
-    print(f"  Refreshed current_balance_points for {updated} rows")
+    print(f"  Refreshed current_balance_points for {cursor.rowcount} rows")
 
 
 def run_for_company(company_id):
