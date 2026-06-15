@@ -1,19 +1,22 @@
 import mysql.connector
 import os
 from sshtunnel import SSHTunnelForwarder
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # SSH Config
-SSH_HOST = 'uat1.vantagecircle.com'
-SSH_PORT = 22
-SSH_USER = 'vantage'
-SSH_KEY  = os.path.expanduser('~/.ssh/id_rsa')
+SSH_HOST = os.getenv('SSH_HOST')
+SSH_PORT = int(os.getenv('SSH_PORT', 22))
+SSH_USER = os.getenv('SSH_USER')
+SSH_KEY  = os.path.expanduser(os.getenv('SSH_KEY', '~/.ssh/id_rsa'))
 
 # DB Config
-SQL_HOSTNAME = 'private-vc-uat-mysql-do-user-384774-0.b.db.ondigitalocean.com'
-SQL_PORT     = 25060
-SQL_USER     = 'tdp_user'
-SQL_PWD      = 'tdp_passwd123'
-SQL_DB       = 'thedealspoint'
+SQL_HOSTNAME = os.getenv('DB_HOSTNAME')
+SQL_PORT     = int(os.getenv('DB_PORT', 3306))
+SQL_USER     = os.getenv('DB_USER')
+SQL_PWD      = os.getenv('DB_PASSWORD')
+SQL_DB       = os.getenv('DB_NAME')
 
 tunnel = None
 
