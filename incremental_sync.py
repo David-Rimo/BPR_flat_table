@@ -241,6 +241,30 @@ def refresh_current_balance(cursor, conn, company_id):
     print(f"  Refreshed current_balance_points for {cursor.rowcount} rows")
 
 
+def refresh_expected_balance_and_mismatch(cursor, conn, company_id):
+    print("\n  Refreshing expected_balance and data_mismatch...")
+    cursor.execute("""
+        UPDATE balance_points_report_summary
+        SET
+            expected_balance = (
+                points_allocated + locked_points +
+                cashback_points + purchased_points -
+                gv_redeemed_points - amazon_redeemed_points -
+                merchandise_redeemed_points - experience_redeemed_points
+            ),
+            data_mismatch = CASE
+                WHEN (
+                    points_allocated + locked_points +
+                    cashback_points + purchased_points -
+                    gv_redeemed_points - amazon_redeemed_points -
+                    merchandise_redeemed_points - experience_redeemed_points
+                ) = current_balance_points THEN 0 ELSE 1 END
+        WHERE company_id = %s
+    """, (company_id,))
+    conn.commit()
+    print(f"  Updated expected_balance and data_mismatch for {cursor.rowcount} rows")
+
+
 def run_for_company(company_id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -266,6 +290,7 @@ def run_for_company(company_id):
         print("Processing points_topup_transaction_details...")
         summary['points_topup_transaction_details'] = process_topup(cursor, conn, company_id)
         refresh_current_balance(cursor, conn, company_id)
+        refresh_expected_balance_and_mismatch(cursor, conn, company_id)
         print(f"\n  Summary for company {company_id}:")
         for table, count in summary.items():
             print(f"    {table}: {count} pairs affected")

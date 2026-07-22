@@ -124,6 +124,26 @@ SELECT
     COALESCE(ex.experience_redeemed_points, 0) AS experience_redeemed_points,
     COALESCE(tp.purchased_points, 0) AS purchased_points,
     COALESCE(bp.current_balance_points, 0) AS current_balance_points,
+    (
+        COALESCE(ep_agg.points_allocated, 0) +
+        COALESCE(lp.locked_points, 0) +
+        COALESCE(CASE WHEN rp.country_id = 91 THEN cb.cashback_points ELSE 0 END, 0) +
+        COALESCE(tp.purchased_points, 0) -
+        COALESCE(gv.gv_redeemed_points, 0) -
+        COALESCE(az.amazon_redeemed_points, 0) -
+        COALESCE(me.merchandise_redeemed_points, 0) -
+        COALESCE(ex.experience_redeemed_points, 0)
+    ) AS expected_balance,
+    CASE WHEN (
+        COALESCE(ep_agg.points_allocated, 0) +
+        COALESCE(lp.locked_points, 0) +
+        COALESCE(CASE WHEN rp.country_id = 91 THEN cb.cashback_points ELSE 0 END, 0) +
+        COALESCE(tp.purchased_points, 0) -
+        COALESCE(gv.gv_redeemed_points, 0) -
+        COALESCE(az.amazon_redeemed_points, 0) -
+        COALESCE(me.merchandise_redeemed_points, 0) -
+        COALESCE(ex.experience_redeemed_points, 0)
+    ) = COALESCE(bp.current_balance_points, 0) THEN 0 ELSE 1 END AS data_mismatch,
     COALESCE(lh.historical_migration_locked_points, 0) AS historical_migration_locked_points,
     COALESCE(lh.normal_locked_points, 0) AS normal_locked_points,
     ll.last_login_at,
@@ -178,6 +198,7 @@ INSERT INTO balance_points_report_summary (
     points_allocated, locked_points, cashback_points,
     gv_redeemed_points, amazon_redeemed_points, merchandise_redeemed_points,
     experience_redeemed_points, purchased_points, current_balance_points,
+    expected_balance, data_mismatch,
     historical_migration_locked_points, normal_locked_points,
     last_login_at, user_created_at
 ) VALUES (
@@ -187,6 +208,7 @@ INSERT INTO balance_points_report_summary (
     %(points_allocated)s, %(locked_points)s, %(cashback_points)s,
     %(gv_redeemed_points)s, %(amazon_redeemed_points)s, %(merchandise_redeemed_points)s,
     %(experience_redeemed_points)s, %(purchased_points)s, %(current_balance_points)s,
+    %(expected_balance)s, %(data_mismatch)s,
     %(historical_migration_locked_points)s, %(normal_locked_points)s,
     %(last_login_at)s, %(user_created_at)s
 )
@@ -206,6 +228,8 @@ ON DUPLICATE KEY UPDATE
     experience_redeemed_points = VALUES(experience_redeemed_points),
     purchased_points = VALUES(purchased_points),
     current_balance_points = VALUES(current_balance_points),
+    expected_balance = VALUES(expected_balance),
+    data_mismatch = VALUES(data_mismatch),
     historical_migration_locked_points = VALUES(historical_migration_locked_points),
     normal_locked_points = VALUES(normal_locked_points),
     last_login_at = VALUES(last_login_at),
