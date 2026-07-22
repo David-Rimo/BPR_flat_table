@@ -285,18 +285,26 @@ def snapshot_max_ids(cursor, company_id):
 def phase1_insert(cursor, conn, user_ids, company_id):
     total_batches = math.ceil(len(user_ids) / BATCH_SIZE)
     total_inserted = 0
+    failed_batches = []
     for batch_num, start in enumerate(range(0, len(user_ids), BATCH_SIZE), 1):
         batch = user_ids[start:start + BATCH_SIZE]
-        placeholders = ", ".join(str(uid) for uid in batch)
-        query = MAIN_QUERY.format(user_ids=placeholders)
-        cursor.execute(query, {'company_id': company_id})
-        rows = cursor.fetchall()
-        if rows:
-            cursor.executemany(INSERT_SQL, rows)
-            conn.commit()
-        total_inserted += len(rows)
-        print(f"Phase 1 Batch {batch_num}/{total_batches}: inserted {len(rows)} rows "
-              f"(total so far: {total_inserted})")
+        try:
+            placeholders = ", ".join(str(uid) for uid in batch)
+            query = MAIN_QUERY.format(user_ids=placeholders)
+            cursor.execute(query, {'company_id': company_id})
+            rows = cursor.fetchall()
+            if rows:
+                cursor.executemany(INSERT_SQL, rows)
+                conn.commit()
+            total_inserted += len(rows)
+            print(f"Phase 1 Batch {batch_num}/{total_batches}: inserted {len(rows)} rows "
+                  f"(total so far: {total_inserted})")
+        except Exception as e:
+            conn.rollback()
+            print(f"  ❌ Phase 1 Batch {batch_num} FAILED: {e} — skipping batch")
+            failed_batches.append(batch_num)
+    if failed_batches:
+        print(f"  ⚠️ {len(failed_batches)} batches failed: {failed_batches}")
     return total_inserted
 
 
@@ -305,31 +313,35 @@ def phase2_update(cursor, conn, user_ids, company_id):
     total_updated = 0
     for batch_num, start in enumerate(range(0, len(user_ids), BATCH_SIZE), 1):
         batch = user_ids[start:start + BATCH_SIZE]
-        placeholders = ", ".join(str(uid) for uid in batch)
-        query = EMP_DETAILS_QUERY.format(user_ids=placeholders)
-        cursor.execute(query, {'company_id': company_id})
-        emp_rows = cursor.fetchall()
-        emp_lookup = {}
-        for row in emp_rows:
-            uid = row['userid']
-            if uid not in emp_lookup:
-                emp_lookup[uid] = row
-        batch_updated = 0
-        for uid in batch:
-            if uid not in emp_lookup:
-                continue
-            data = emp_lookup[uid]
-            cursor.execute(UPDATE_EMP_SQL, {
-                'employee_id': data['employee_id'],
-                'employee_name': data['employee_name'],
-                'employee_email': data['employee_email'],
-                'userid': uid,
-            })
-            batch_updated += cursor.rowcount
-        conn.commit()
-        total_updated += batch_updated
-        print(f"Phase 2 Batch {batch_num}/{total_batches}: updated {batch_updated} rows "
-              f"(total so far: {total_updated})")
+        try:
+            placeholders = ", ".join(str(uid) for uid in batch)
+            query = EMP_DETAILS_QUERY.format(user_ids=placeholders)
+            cursor.execute(query, {'company_id': company_id})
+            emp_rows = cursor.fetchall()
+            emp_lookup = {}
+            for row in emp_rows:
+                uid = row['userid']
+                if uid not in emp_lookup:
+                    emp_lookup[uid] = row
+            batch_updated = 0
+            for uid in batch:
+                if uid not in emp_lookup:
+                    continue
+                data = emp_lookup[uid]
+                cursor.execute(UPDATE_EMP_SQL, {
+                    'employee_id': data['employee_id'],
+                    'employee_name': data['employee_name'],
+                    'employee_email': data['employee_email'],
+                    'userid': uid,
+                })
+                batch_updated += cursor.rowcount
+            conn.commit()
+            total_updated += batch_updated
+            print(f"Phase 2 Batch {batch_num}/{total_batches}: updated {batch_updated} rows "
+                  f"(total so far: {total_updated})")
+        except Exception as e:
+            conn.rollback()
+            print(f"  ❌ Phase 2 Batch {batch_num} FAILED: {e} — skipping batch")
     return total_updated
 
 
@@ -361,21 +373,45 @@ def run(company_id, phase2only=False):
     cursor.execute("SET SESSION net_write_timeout = 3600")
     cursor.execute("SET SESSION sql_mode = ''")
     try:
-        snapshots = snapshot_max_ids(cursor, company_id)
-        print(f"\nFetching user IDs for company {company_id}...")
-        user_ids = get_all_user_ids(cursor, company_id)
-        total_batches = math.ceil(len(user_ids) / BATCH_SIZE)
-        print(f"Found {len(user_ids)} users across {total_batches} batches")
+        try:
+            snapshots = snapshot_max_ids(cursor, company_id)
+        except Exception as e:
+            print(f"❌ Failed to snapshot MAX IDs: {e}")
+            return
+
+        try:
+            print(f"\nFetching user IDs for company {company_id}...")
+            user_ids = get_all_user_ids(cursor, company_id)
+            total_batches = math.ceil(len(user_ids) / BATCH_SIZE)
+            print(f"Found {len(user_ids)} users across {total_batches} batches")
+        except Exception as e:
+            print(f"❌ Failed to fetch user IDs: {e}")
+            return
+
         if not phase2only:
-            print("\n=== Phase 1: Main data insert ===")
-            inserted = phase1_insert(cursor, conn, user_ids, company_id)
-            print(f"Phase 1 complete: {inserted} rows inserted")
-        print("\n=== Phase 2: Employee details update ===")
-        updated = phase2_update(cursor, conn, user_ids, company_id)
-        print(f"Phase 2 complete: {updated} rows updated")
-        print("\n=== Phase 3: Sync tracker snapshot ===")
-        update_sync_tracker(cursor, conn, snapshots, company_id)
-        print("\n✅ Initial load complete.")
+            try:
+                print("\n=== Phase 1: Main data insert ===")
+                inserted = phase1_insert(cursor, conn, user_ids, company_id)
+                print(f"Phase 1 complete: {inserted} rows inserted")
+            except Exception as e:
+                print(f"❌ Phase 1 failed: {e}")
+                conn.rollback()
+                print("Continuing to Phase 2...")
+
+        try:
+            print("\n=== Phase 2: Employee details update ===")
+            updated = phase2_update(cursor, conn, user_ids, company_id)
+            print(f"Phase 2 complete: {updated} rows updated")
+        except Exception as e:
+            print(f"❌ Phase 2 failed: {e}")
+            conn.rollback()
+
+        try:
+            print("\n=== Phase 3: Sync tracker snapshot ===")
+            update_sync_tracker(cursor, conn, snapshots, company_id)
+            print("\n✅ Initial load complete.")
+        except Exception as e:
+            print(f"❌ Phase 3 failed — sync tracker not updated: {e}")
     finally:
         cursor.close()
         conn.close()
