@@ -1,6 +1,16 @@
 from mysql_connector import open_ssh_tunnel, get_connection, close_ssh_tunnel
 
-COMPANY_IDS = [63]
+
+def get_company_ids(cursor):
+    cursor.execute("""
+        SELECT DISTINCT company_id
+        FROM balance_points_report_sync_tracker
+        ORDER BY company_id
+    """)
+    rows = cursor.fetchall()
+    company_ids = [row['company_id'] for row in rows]
+    print(f"  Found {len(company_ids)} companies to process: {company_ids}")
+    return company_ids
 
 
 def get_last_seen_id(cursor, company_id, table_name):
@@ -386,7 +396,16 @@ def run_for_company(company_id):
 def run():
     open_ssh_tunnel()
     try:
-        for company_id in COMPANY_IDS:
+        # Open one connection just to fetch company IDs
+        temp_conn = get_connection()
+        temp_cursor = temp_conn.cursor(dictionary=True)
+        try:
+            company_ids = get_company_ids(temp_cursor)
+        finally:
+            temp_cursor.close()
+            temp_conn.close()
+
+        for company_id in company_ids:
             print(f"\n{'='*50}")
             print(f"Processing company_id: {company_id}")
             print(f"{'='*50}")
