@@ -265,6 +265,87 @@ def refresh_expected_balance_and_mismatch(cursor, conn, company_id):
     print(f"  Updated expected_balance and data_mismatch for {cursor.rowcount} rows")
 
 
+def detect_and_insert_new_users(cursor, conn, company_id):
+    print("\n  Detecting new users...")
+    cursor.execute("""
+        SELECT DISTINCT u.id AS user_id, ep.country_id
+        FROM users u
+        INNER JOIN employee_points_transactions ept ON ept.userid = u.id
+        INNER JOIN employee_points ep ON ept.employee_points_id = ep.id
+            AND ep.status IN (1, 4)
+            AND ep.amount > 0
+        WHERE u.company_id = %s
+        AND NOT EXISTS (
+            SELECT 1 FROM balance_points_report_summary bpr
+            WHERE bpr.vc_user_id = u.id
+            AND bpr.country_id = ep.country_id
+        )
+    """, (company_id,))
+    new_rows = cursor.fetchall()
+
+    if not new_rows:
+        print("  No new users detected")
+        return 0
+
+    for row in new_rows:
+        cursor.execute("""
+            INSERT IGNORE INTO balance_points_report_summary
+                (vc_user_id, company_id, country_id, country_name, status,
+                 points_allocated, locked_points, cashback_points,
+                 gv_redeemed_points, amazon_redeemed_points,
+                 merchandise_redeemed_points, experience_redeemed_points,
+                 purchased_points, current_balance_points,
+                 historical_migration_locked_points, normal_locked_points,
+                 expected_balance, data_mismatch)
+            SELECT
+                u.id, u.company_id, c.id, c.country_name,
+                (CASE WHEN u.status = 1 THEN 'Active' ELSE 'Inactive' END),
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            FROM users u
+            INNER JOIN countries c ON c.id = %s
+            WHERE u.id = %s
+        """, (row['country_id'], row['user_id']))
+    conn.commit()
+
+    new_user_ids = sorted({row['user_id'] for row in new_rows})
+    placeholders = ", ".join(str(uid) for uid in new_user_ids)
+    cursor.execute("""
+        SELECT
+            ept.userid,
+            decrypt(ed.employee_id) AS employee_id,
+            decrypt(ed.name) AS employee_name,
+            decrypt(ed.email_id) AS employee_email
+        FROM employee_details ed
+        INNER JOIN employee_points ep ON ed.email_id = ep.employee_id
+        INNER JOIN employee_points_transactions ept ON ep.id = ept.employee_points_id
+        WHERE ed.company_id = %s
+        AND ept.userid IN ({new_user_ids})
+        ORDER BY ed.id DESC
+    """.format(new_user_ids=placeholders), (company_id,))
+    emp_rows = cursor.fetchall()
+
+    emp_lookup = {}
+    for row in emp_rows:
+        uid = row['userid']
+        if uid not in emp_lookup:
+            emp_lookup[uid] = row
+
+    for uid, data in emp_lookup.items():
+        cursor.execute("""
+            UPDATE balance_points_report_summary
+            SET employee_id = %s,
+                employee_name = %s,
+                employee_email = %s
+            WHERE vc_user_id = %s
+        """, (data['employee_id'], data['employee_name'],
+              data['employee_email'], uid))
+    conn.commit()
+
+    print(f"  Detected and inserted {len(new_rows)} new user-country rows "
+          f"({len(new_user_ids)} users)")
+    return len(new_rows)
+
+
 def run_for_company(company_id):
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -275,6 +356,9 @@ def run_for_company(company_id):
     cursor.execute("SET SESSION sql_mode = ''")
     summary = {}
     try:
+        print("Detecting and inserting new users...")
+        new_users = detect_and_insert_new_users(cursor, conn, company_id)
+        summary['new_users_inserted'] = new_users
         print("Processing employee_points_transactions...")
         summary['employee_points_id'] = process_employee_points(cursor, conn, company_id)
         print("Processing locked_points_transactions...")
