@@ -107,7 +107,7 @@ last_login AS (
     GROUP BY ulh.userid
 )
 SELECT
-    u.id AS vc_user_id,
+    u.id AS user_id,
     u.company_id,
     (CASE WHEN u.status = 1 THEN 'Active' ELSE 'Inactive' END) AS status,
     NULL AS employee_id,
@@ -192,7 +192,7 @@ ORDER BY ed.id DESC
 
 INSERT_SQL = """
 INSERT INTO balance_points_report_summary (
-    vc_user_id, company_id, status,
+    user_id, company_id, status,
     employee_id, employee_name, employee_email,
     country_id, country_name,
     points_allocated, locked_points, cashback_points,
@@ -202,7 +202,7 @@ INSERT INTO balance_points_report_summary (
     historical_migration_locked_points, normal_locked_points,
     last_login_at, user_created_at
 ) VALUES (
-    %(vc_user_id)s, %(company_id)s, %(status)s,
+    %(user_id)s, %(company_id)s, %(status)s,
     %(employee_id)s, %(employee_name)s, %(employee_email)s,
     %(country_id)s, %(country_name)s,
     %(points_allocated)s, %(locked_points)s, %(cashback_points)s,
@@ -241,7 +241,7 @@ UPDATE balance_points_report_summary
 SET employee_id = %(employee_id)s,
     employee_name = %(employee_name)s,
     employee_email = %(employee_email)s
-WHERE vc_user_id = %(userid)s
+WHERE user_id = %(userid)s
 """
 
 

@@ -44,7 +44,7 @@ def apply_delta(cursor, user_id, country_id, column_name, delta):
     cursor.execute(
         f"UPDATE balance_points_report_summary "
         f"SET {column_name} = {column_name} + %s "
-        f"WHERE vc_user_id = %s AND country_id = %s",
+        f"WHERE user_id = %s AND country_id = %s",
         (delta, user_id, country_id)
     )
 
@@ -241,7 +241,7 @@ def refresh_current_balance(cursor, conn, company_id):
             INNER JOIN users u ON r.user_id = u.id
             WHERE u.company_id = %s
             GROUP BY r.user_id, r.country_id
-        ) calc ON calc.user_id = bpr.vc_user_id
+        ) calc ON calc.user_id = bpr.user_id
               AND calc.country_id = bpr.country_id
         SET bpr.current_balance_points = calc.balance
         WHERE bpr.company_id = %s
@@ -287,7 +287,7 @@ def detect_and_insert_new_users(cursor, conn, company_id):
         WHERE u.company_id = %s
         AND NOT EXISTS (
             SELECT 1 FROM balance_points_report_summary bpr
-            WHERE bpr.vc_user_id = u.id
+            WHERE bpr.user_id = u.id
             AND bpr.country_id = ep.country_id
         )
     """, (company_id,))
@@ -300,7 +300,7 @@ def detect_and_insert_new_users(cursor, conn, company_id):
     for row in new_rows:
         cursor.execute("""
             INSERT IGNORE INTO balance_points_report_summary
-                (vc_user_id, company_id, country_id, country_name, status,
+                (user_id, company_id, country_id, country_name, status,
                  points_allocated, locked_points, cashback_points,
                  gv_redeemed_points, amazon_redeemed_points,
                  merchandise_redeemed_points, experience_redeemed_points,
@@ -346,7 +346,7 @@ def detect_and_insert_new_users(cursor, conn, company_id):
             SET employee_id = %s,
                 employee_name = %s,
                 employee_email = %s
-            WHERE vc_user_id = %s
+            WHERE user_id = %s
         """, (data['employee_id'], data['employee_name'],
               data['employee_email'], uid))
     conn.commit()
