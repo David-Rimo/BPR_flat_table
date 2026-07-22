@@ -367,27 +367,52 @@ def run_for_company(company_id):
     summary = {}
     try:
         print("Detecting and inserting new users...")
-        new_users = detect_and_insert_new_users(cursor, conn, company_id)
-        summary['new_users_inserted'] = new_users
-        print("Processing employee_points_transactions...")
-        summary['employee_points_id'] = process_employee_points(cursor, conn, company_id)
-        print("Processing locked_points_transactions...")
-        summary['locked_points_transactions'] = process_locked_points(cursor, conn, company_id)
-        print("Processing affiliate_reward_point...")
-        summary['affiliate_reward_point'] = process_affiliate_reward(cursor, conn, company_id)
-        print("Processing gift_voucher...")
-        summary['gift_voucher'] = process_gift_voucher(cursor, conn, company_id)
-        print("Processing orders...")
-        summary['orders'] = process_orders(cursor, conn, company_id)
-        print("Processing experiences_transactions...")
-        summary['experiences_transactions'] = process_experiences(cursor, conn, company_id)
-        print("Processing points_topup_transaction_details...")
-        summary['points_topup_transaction_details'] = process_topup(cursor, conn, company_id)
-        refresh_current_balance(cursor, conn, company_id)
-        refresh_expected_balance_and_mismatch(cursor, conn, company_id)
+        try:
+            new_users = detect_and_insert_new_users(cursor, conn, company_id)
+            summary['new_users_inserted'] = new_users
+        except Exception as e:
+            summary['new_users_inserted'] = 'ERROR'
+            print(f"  ❌ ERROR detecting new users: {e}")
+            conn.rollback()
+
+        tasks = [
+            ('employee_points_id', process_employee_points),
+            ('locked_points_transactions', process_locked_points),
+            ('affiliate_reward_point', process_affiliate_reward),
+            ('gift_voucher', process_gift_voucher),
+            ('orders', process_orders),
+            ('experiences_transactions', process_experiences),
+            ('points_topup_transaction_details', process_topup),
+        ]
+
+        for table_name, process_fn in tasks:
+            print(f"Processing {table_name}...")
+            try:
+                summary[table_name] = process_fn(cursor, conn, company_id)
+            except Exception as e:
+                summary[table_name] = 'ERROR'
+                print(f"  ❌ ERROR processing {table_name}: {e}")
+                print(f"  Skipping {table_name} and continuing...")
+                conn.rollback()
+
+        try:
+            refresh_current_balance(cursor, conn, company_id)
+        except Exception as e:
+            print(f"  ❌ ERROR refreshing current_balance: {e}")
+            conn.rollback()
+
+        try:
+            refresh_expected_balance_and_mismatch(cursor, conn, company_id)
+        except Exception as e:
+            print(f"  ❌ ERROR refreshing expected_balance: {e}")
+            conn.rollback()
+
         print(f"\n  Summary for company {company_id}:")
         for table, count in summary.items():
-            print(f"    {table}: {count} pairs affected")
+            if count == 'ERROR':
+                print(f"    ❌ {table}: FAILED")
+            else:
+                print(f"    {table}: {count} pairs affected")
     finally:
         cursor.close()
         conn.close()
