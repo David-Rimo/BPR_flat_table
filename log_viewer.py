@@ -54,6 +54,16 @@ def log_mtime():
         return None
 
 
+def minutes_since_last_run():
+    """Minutes since the log file was last written, or None."""
+    try:
+        age = datetime.now() - datetime.fromtimestamp(
+            os.path.getmtime(LOG_FILE))
+        return age.total_seconds() / 60
+    except Exception:
+        return None
+
+
 def last_timestamp(text):
     """Last timestamp appearing in the given text, or None."""
     found = TIMESTAMP_RE.findall(text)
@@ -238,6 +248,11 @@ td.num { font-variant-numeric: tabular-nums; }
   background: #fff8e1; border: 1px solid #ffc107; color: #7a5c00;
   padding: 16px 18px; border-radius: 6px; font-size: 14px;
 }
+.stale {
+  background: #fdecec; border: 1px solid #f5c2c7; color: #a71d2a;
+  padding: 14px 18px; border-radius: 6px; font-size: 14px;
+  font-weight: 600; margin-bottom: 16px;
+}
 #rawbox {
   background: #ffffff; border: 1px solid #e3e8ee; border-radius: 6px;
   height: 65vh; overflow: auto; padding: 12px 14px;
@@ -397,6 +412,32 @@ def render_dashboard(content, error):
     overall = last_timestamp(content) or log_mtime() or 'unknown'
     total_errors = sum(1 for c in companies if c['has_error'])
 
+    stale_banner = ''
+    age = minutes_since_last_run()
+    if age is not None and age > 40:
+        stale_banner = (
+            '<div class="stale">&#9888; No sync output for %d minutes. '
+            'The cron job may have stopped running &mdash; the summary '
+            'below is from an earlier run and may be out of date.</div>'
+            % int(age))
+
+    # A crash on import prints a traceback but no run marker, so
+    # isolate_last_run() silently falls back to the previous good run.  Surface
+    # the traceback here instead of letting the stale summary look healthy.
+    crash_banner = ''
+    if re.search(r'Traceback|ModuleNotFoundError', isolate_last_run(content)):
+        tail = html.escape('\n'.join(content.rstrip().splitlines()[-5:]))
+        crash_banner = (
+            '<div class="stale">&#9888; The most recent run crashed &mdash; the '
+            'summary below is from an earlier run. Last lines of the log:'
+            '<pre style="margin:10px 0 0; padding:10px 12px; background:#ffffff;'
+            ' border:1px solid #f5c2c7; border-radius:4px; font-weight:400;'
+            ' font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;'
+            ' font-size:12.5px; white-space:pre-wrap; word-break:break-word;'
+            '">%s</pre></div>' % tail)
+
+    banners = stale_banner + crash_banner
+
     error_class = 'error' if total_errors else 'ok'
     cards = """
     <div class="cards">
@@ -410,8 +451,9 @@ def render_dashboard(content, error):
     """ % (html.escape(str(overall)), len(companies), error_class, total_errors)
 
     if not companies:
-        return cards + ('<div class="notice">No company blocks found in the log '
-                        'yet. The sync may still be starting up.</div>')
+        return banners + cards + (
+            '<div class="notice">No company blocks found in the log '
+            'yet. The sync may still be starting up.</div>')
 
     rows = []
     for c in companies:
@@ -447,7 +489,7 @@ def render_dashboard(content, error):
     </div>
     """ % ''.join(rows)
 
-    return cards + table
+    return banners + cards + table
 
 
 def render_raw(content, error):
