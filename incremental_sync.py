@@ -229,6 +229,33 @@ def process_topup(cursor, conn, company_id):
     return len(rows)
 
 
+def process_opening_closing_balance(cursor, conn, company_id):
+    table = 'opening_closing_balance'
+    last_id = get_last_seen_id(cursor, company_id, table)
+    cursor.execute("""
+        SELECT ob.user_id, ob.country AS country_id,
+               SUM(ob.debit) AS delta,
+               MAX(ob.id) AS max_id
+        FROM opening_closing_balance ob
+        INNER JOIN users u ON ob.user_id = u.id
+        WHERE ob.id > %s
+        AND u.company_id = %s
+        AND ob.wallet = 1
+        AND ob.category IN (3, 4, 5)
+        GROUP BY ob.user_id, ob.country
+    """, (last_id, company_id))
+    rows = cursor.fetchall()
+    new_max_id = last_id
+    for row in rows:
+        apply_delta(cursor, row['user_id'], row['country_id'],
+                    'total_redemption_against_allocation', row['delta'])
+        new_max_id = max(new_max_id, row['max_id'])
+    update_tracker(cursor, conn, company_id, table, new_max_id)
+    conn.commit()
+    print(f"  opening_closing_balance: {len(rows)} user-country pairs affected")
+    return len(rows)
+
+
 def refresh_current_balance(cursor, conn, company_id):
     print("\n  Refreshing current_balance_points...")
 
@@ -383,6 +410,7 @@ def run_for_company(company_id):
             ('orders', process_orders),
             ('experiences_transactions', process_experiences),
             ('points_topup_transaction_details', process_topup),
+            ('opening_closing_balance', process_opening_closing_balance),
         ]
 
         for table_name, process_fn in tasks:

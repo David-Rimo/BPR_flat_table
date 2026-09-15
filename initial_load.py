@@ -11,6 +11,7 @@ TRACKED_TABLES = [
     'orders',
     'experiences_transactions',
     'points_topup_transaction_details',
+    'opening_closing_balance',
 ]
 
 MAIN_QUERY = """
@@ -42,6 +43,15 @@ locked_hist AS (
     FROM locked_points_transactions lpt
     WHERE lpt.userid IN ({user_ids})
     GROUP BY lpt.userid, lpt.country_id
+),
+redemption_alloc AS (
+    SELECT ob.user_id, ob.country,
+           COALESCE(SUM(ob.debit), 0) AS total_redemption_against_allocation
+    FROM opening_closing_balance ob
+    WHERE ob.wallet = 1
+    AND ob.category IN (3, 4, 5)
+    AND ob.user_id IN ({user_ids})
+    GROUP BY ob.user_id, ob.country
 ),
 cashback_pts AS (
     SELECT arp.user_id, SUM(arp.points) AS cashback_points
@@ -123,6 +133,7 @@ SELECT
     COALESCE(me.merchandise_redeemed_points, 0) AS merchandise_redeemed_points,
     COALESCE(ex.experience_redeemed_points, 0) AS experience_redeemed_points,
     COALESCE(tp.purchased_points, 0) AS purchased_points,
+    COALESCE(ra.total_redemption_against_allocation, 0) AS total_redemption_against_allocation,
     COALESCE(bp.current_balance_points, 0) AS current_balance_points,
     (
         COALESCE(ep_agg.points_allocated, 0) +
@@ -168,6 +179,8 @@ LEFT JOIN exp_pts ex ON ex.user_id = u.id
     AND ex.country_id = rp.country_id
 LEFT JOIN topup_pts tp ON tp.user_id = u.id
     AND tp.country_id = rp.country_id
+LEFT JOIN redemption_alloc ra ON ra.user_id = u.id
+    AND ra.country = rp.country_id
 LEFT JOIN balance_pts bp ON bp.user_id = u.id
     AND bp.country_id = rp.country_id
 LEFT JOIN last_login ll ON ll.userid = u.id
@@ -197,7 +210,8 @@ INSERT INTO balance_points_report_summary (
     country_id, country_name,
     points_allocated, locked_points, cashback_points,
     gv_redeemed_points, amazon_redeemed_points, merchandise_redeemed_points,
-    experience_redeemed_points, purchased_points, current_balance_points,
+    experience_redeemed_points, purchased_points,
+    total_redemption_against_allocation, current_balance_points,
     expected_balance, data_mismatch,
     historical_migration_locked_points, normal_locked_points,
     last_login_at, user_created_at
@@ -207,7 +221,8 @@ INSERT INTO balance_points_report_summary (
     %(country_id)s, %(country_name)s,
     %(points_allocated)s, %(locked_points)s, %(cashback_points)s,
     %(gv_redeemed_points)s, %(amazon_redeemed_points)s, %(merchandise_redeemed_points)s,
-    %(experience_redeemed_points)s, %(purchased_points)s, %(current_balance_points)s,
+    %(experience_redeemed_points)s, %(purchased_points)s,
+    %(total_redemption_against_allocation)s, %(current_balance_points)s,
     %(expected_balance)s, %(data_mismatch)s,
     %(historical_migration_locked_points)s, %(normal_locked_points)s,
     %(last_login_at)s, %(user_created_at)s
@@ -227,6 +242,7 @@ ON DUPLICATE KEY UPDATE
     merchandise_redeemed_points = VALUES(merchandise_redeemed_points),
     experience_redeemed_points = VALUES(experience_redeemed_points),
     purchased_points = VALUES(purchased_points),
+    total_redemption_against_allocation = VALUES(total_redemption_against_allocation),
     current_balance_points = VALUES(current_balance_points),
     expected_balance = VALUES(expected_balance),
     data_mismatch = VALUES(data_mismatch),
